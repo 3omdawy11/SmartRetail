@@ -1,0 +1,6 @@
+# Phase 2 — Local simulation only (no PySpark / Hadoop)
+confluent-kafka==2.4.0
+torch==2.3.1
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.5.1

@@ -1,0 +1,25 @@
+# Raw & processed data — ignore the files, keep the folders via .gitkeep
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Exported model weights — tracked via Drive / DVC separately
+models/*
+!models/.gitkeep
+models/lstm_model.pth
+
+# Local environment
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
