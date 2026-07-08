@@ -10,8 +10,8 @@ An end-to-end e-commerce optimization pipeline built on the Retailrocket clickst
 smart_retail/
 ├── colab_notebooks/
 │   ├── 1_data_preprocessing.ipynb   ← ETL (DONE)
-│   ├── 2_train_baseline_ml.ipynb    ← GBT demand forecasting (NEXT)
-│   ├── 3_train_lstm_dl.ipynb        ← LSTM surge detection
+│   ├── 2_train_baseline_ml.ipynb    ← GBT demand forecasting (DONE)
+│   ├── 3_train_lstm_dl.ipynb        ← LSTM surge detection (DONE)
 │   └── 4_build_graphframes.ipynb    ← Product relationship graph
 ├── data/
 │   ├── raw/                         ← Drop raw CSVs here (gitignored)
@@ -88,7 +88,7 @@ The raw Retailrocket CSVs were ingested and cleaned using PySpark on Google Cola
 
 ---
 
-## Notebook 2 — GBT Demand Forecasting (Up Next)
+## Notebook 2 — GBT Demand Forecasting (Completed)
 
 ### What this notebook will do
 
@@ -156,11 +156,21 @@ views_lag1, addtocart_lag1
 
 ### Output to save
 
-- `models/baseline_config.json` — the trained model parameters and feature list for use in Phase 2 inference
+- `models/baseline_config.json` — the trained model parameters and feature list, kept as a documentation artifact (Phase 2 has no Spark, so this model never runs live there)
+
+### Results
+
+| Metric | Value |
+|---|---|
+| RMSE | 0.1793 |
+| MAE | 0.0455 |
+| R² | 0.2998 |
+
+**Known limitation — zero-inflation.** 96.65% of test rows have zero actual transactions, since most SKU-days simply have no sale. The model learns which items are likely to sell (`velocity_7d` dominates feature importance) but not how much — on the 1,516 test rows with a real sale, error jumps to RMSE 0.83 / MAE 0.72 against mostly-1 true values. A `log1p` target transform was tried and measured; it left R²/RMSE essentially unchanged, because `log1p` corrects right-skew, not zero-inflation, and is nearly linear over mostly-{0,1} values. The correct fix would be a two-stage hurdle model (classify "sells today?" then regress magnitude on the positive rows only) — out of scope for this baseline pass. Accepted as-is: this is an academic portfolio project, the baseline's purpose is to demonstrate the pipeline and the diagnostic process, and the LSTM (notebook 3) is the actual real-time workhorse for the Phase 2 streaming simulation.
 
 ---
 
-## Notebook 3 — LSTM Surge Detection (Up Next)
+## Notebook 3 — LSTM Surge Detection (Completed)
 
 ### What this notebook will do
 
