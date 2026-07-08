@@ -1,6 +1,12 @@
 # Phase 2 — Local simulation only (no PySpark / Hadoop)
-confluent-kafka==2.4.0
-torch==2.3.1
-numpy==1.26.4
-pandas==2.2.2
-scikit-learn==1.5.1
+# Versions below are pinned to what's verified working on Python 3.13 in this
+# project's venv — the originally-pinned versions (torch==2.3.1, numpy==1.26.4)
+# don't ship wheels for 3.13. If you're on an older Python, older pins should work too.
+confluent-kafka==2.15.0
+torch==2.12.1
+numpy==2.5.1
+pandas==3.0.3
+scikit-learn==1.9.0
+pyarrow==24.0.0
+matplotlib==3.11.0
+python-dotenv==1.2.2

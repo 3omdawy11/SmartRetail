@@ -22,9 +22,15 @@ smart_retail/
 │   ├── lstm_config.json
 │   └── relationships.json
 ├── simulation/
+│   ├── prepare_stream_sample.py
+│   ├── pricing_engine.py
+│   ├── run_dry_run.py
 │   ├── producer.py
 │   ├── consumer_engine.py
-│   └── notifier.py
+│   ├── notifier.py
+│   ├── visualize_results.py
+│   └── output/                      ← price_history.csv, charts/ (gitignored)
+├── docker-compose.yml                ← local Redpanda (Kafka-API) broker
 ├── requirements.txt
 └── README.md
 ```
@@ -267,15 +273,74 @@ Builds a weighted co-occurrence graph of products from raw `events.csv` (not not
 
 ## Phase 2 — Local Streaming Simulation
 
-> Documentation will be added once the simulation scripts are built.
+Runs entirely in plain Python — no Spark or Hadoop required locally. All pieces below were built and verified end-to-end against a real local Kafka broker (Redpanda via Docker), not just written and handed off.
 
-Runs entirely in plain Python — no Spark or Hadoop required locally.
+### Fixing `raw_sample.csv` first
+
+Notebook 1's original `raw_sample.csv` (`test_df.orderBy(event_date, itemid).limit(2000)`) only captured the *first* calendar day of the test window — one row per item, no history at all. The LSTM needs a 7-day rolling window per item before it can predict anything, so that file could never trigger a surge during streaming.
+
+`simulation/prepare_stream_sample.py` regenerates it locally from the full `data/processed/test/` Parquet (no Spark needed — it's already on disk): selects items with ≥7 days of history (so LSTM windows can form), ranked by view volume, plus their related items from `relationships.json` (so price propagation has something to show), keeping every available row for those items across the full 28-day test window.
+
+```bash
+python simulation/prepare_stream_sample.py
+```
+
+Produces ~415 items / ~5,500 rows spanning the full test date range, versus the original 2,000 rows / 1 day.
+
+### Price-adjustment logic
+
+`simulation/pricing_engine.py` holds the model-agnostic, Kafka-agnostic core (`PricingEngine`): per-item rolling window, LSTM inference, and price propagation through `relationships.json`. It's shared by the offline dry run and the live Kafka consumer so the logic is identical either way.
+
+- **On a surge** (`sigmoid(logits) >= decision_threshold` from `lstm_config.json`): the item's price bumps by `price_bump_pct` (10%).
+- **Related items** (from `relationships.json`) get a smaller bump, scaled by `related_bump_scale` (0.5) and by their co-occurrence weight relative to the strongest related item.
+- **Guardrails against runaway compounding** — an item that keeps re-triggering would otherwise bump every single day it stays "hot," and related bumps stack on top of each other. A `cooldown_days` (3) suppresses re-bumping the same item too soon, and a hard price cap (`price_cap_multiplier` = 1.5× base for direct surges, 1.25× for related items) bounds the outcome regardless. Verified empirically: on the regenerated sample, 484 surge events / 1,159 related bumps produced clean step trajectories that cap out at exactly +50%/+25%, not unbounded hockey sticks.
+- Feature vectors are built by iterating `lstm_config.json`'s `sequence_features` list **in order** — never hardcoded — so the tensor's feature axis can't silently drift from what the model was trained on.
+
+### Running it
+
+**Offline (no Docker, fastest way to inspect the logic):**
+
+```bash
+python simulation/run_dry_run.py
+```
+
+**Live, through Kafka (matches the project's "streaming" framing):**
+
+```bash
+docker compose up -d       # starts a local Redpanda broker on localhost:9092
+```
+
+Then, in **two separate terminals** (the consumer waits for messages, so start it first):
+
+```bash
+# terminal 1
+python simulation/consumer_engine.py
+
+# terminal 2
+python simulation/producer.py
+```
+
+Each producer run resets the Kafka topic first, so re-running the demo always starts clean. If you run the consumer a second time *without* a fresh producer run, it correctly reports 0 rows consumed and refuses to overwrite `price_history.csv` with empty results — that guard was tested, not assumed.
+
+Both paths write `simulation/output/price_history.csv` (every price change: timestamp, item, old→new price, trigger reason, source item, confidence, co-occurrence weight) and produce identical results — confirmed by running both against the same sample.
 
 | Script | Role |
 |---|---|
-| `simulation/producer.py` | Reads `raw_sample.csv` row-by-row and pushes to a local Kafka topic |
-| `simulation/consumer_engine.py` | Consumes Kafka stream, runs LSTM inference, applies price adjustments using `relationships.json` |
-| `simulation/notifier.py` | Fires SMTP email alerts to vendors on surge detection |
+| `simulation/prepare_stream_sample.py` | Regenerates a proper multi-day `raw_sample.csv` locally from the full test Parquet |
+| `simulation/pricing_engine.py` | Shared surge-detection + price-propagation logic (`PricingEngine`), Kafka-agnostic |
+| `simulation/run_dry_run.py` | Runs the pricing engine directly over `raw_sample.csv`, no Docker needed |
+| `simulation/producer.py` | Streams `raw_sample.csv` row-by-row into the Kafka topic, chronologically |
+| `simulation/consumer_engine.py` | Consumes the Kafka stream, runs the pricing engine, fires alerts, writes the price log |
+| `simulation/notifier.py` | Prints a console alert on every surge; sends real SMTP email too if `.env` has `SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`ALERT_RECIPIENT` set — falls back to console-only if not configured or if sending fails |
+| `simulation/visualize_results.py` | Charts each top surging item's price trajectory (as % change from base, so items with different price scales are comparable) alongside its related items, plus a surge-count timeline |
+
+### Charts
+
+```bash
+python simulation/visualize_results.py
+```
+
+Writes to `simulation/output/charts/`: one PNG per top surging item (its own price line plus its related items', surge points annotated with model confidence) and one `surge_timeline.png` showing surge activity across the simulated 28-day window.
 
 Install local dependencies with:
 
