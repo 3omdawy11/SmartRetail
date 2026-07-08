@@ -12,13 +12,15 @@ smart_retail/
 │   ├── 1_data_preprocessing.ipynb   ← ETL (DONE)
 │   ├── 2_train_baseline_ml.ipynb    ← GBT demand forecasting (DONE)
 │   ├── 3_train_lstm_dl.ipynb        ← LSTM surge detection (DONE)
-│   └── 4_build_graphframes.ipynb    ← Product relationship graph
+│   └── 4_build_graphframes.ipynb    ← Product relationship graph (DONE)
 ├── data/
 │   ├── raw/                         ← Drop raw CSVs here (gitignored)
 │   └── processed/                   ← ETL outputs land here (gitignored)
 ├── models/
 │   ├── baseline_config.json
-│   └── lstm_model.pth
+│   ├── lstm_model.pth
+│   ├── lstm_config.json
+│   └── relationships.json
 ├── simulation/
 │   ├── producer.py
 │   ├── consumer_engine.py
@@ -234,12 +236,38 @@ y_train shape: [n_samples]          # binary: 0 or 1
 ### Output to save
 
 - `models/lstm_model.pth` — trained LSTM weights loaded by `consumer_engine.py` in Phase 2
+- `models/lstm_config.json` — feature order, per-feature min/max (for normalising live stream data identically), architecture, surge-label rule, and decision threshold. Phase 2 has no Spark, so this file is the only place those stats are recorded.
+
+### Results
+
+| Metric | Value |
+|---|---|
+| Accuracy | 0.8963 |
+| Precision | 0.4480 |
+| Recall | 0.7009 |
+| F1 | 0.5466 |
+
+Confusion matrix on 55,105 test windows (8.92% true surge rate): **3,444 true positives, 1,470 false negatives, 4,244 false positives, 45,947 true negatives.** Recall > precision is by design — `BCEWithLogitsLoss(pos_weight=...)` deliberately biases the loss toward catching surges (missing one means no price adjustment happens when it should), at the cost of more false alarms (55% of raised alerts). The label itself is a `daily_views > mean + 2σ` threshold, and `daily_views` is one of the 5 sequence inputs, so the model leans heavily on the current day's view count — the same dynamic as `velocity_7d` dominating the GBT's feature importances.
+
+---
+
+## Notebook 4 — Product Relationship Graph (Completed)
+
+### What this notebook does
+
+Builds a weighted co-occurrence graph of products from raw `events.csv` (not notebook 1's daily aggregation — session structure lives at the individual-event level). Restricts to `addtocart`/`transaction` events (a much stronger "these items are related" signal than views), sessionizes per visitor with a 30-minute inactivity gap, and caps basket size at 20 items before generating co-occurrence pairs via a `session_id` self-join — safe because each join key only matches within one small, capped basket, unlike a lifetime-history self-join which would blow up quadratically.
+
+`relationships.json` is derived directly from the weighted edges DataFrame, so it doesn't depend on `GraphFrame`/PageRank succeeding — GraphFrames ships a separate JVM package per Spark/Scala build that can't be verified outside Colab, so the notebook's actual deliverable is structured to survive that step failing. PageRank runs on top as the graph-algorithm showcase (surfaces items structurally central to co-purchase behavior, not just individually popular ones).
+
+### Output to save
+
+- `models/relationships.json` — top-5 related items per SKU with co-occurrence weight, keyed by `str(itemid)`. Phase 2 scales a related item's price bump proportionally to its weight rather than applying a flat adjustment to every related item.
 
 ---
 
 ## Phase 2 — Local Streaming Simulation
 
-> Documentation will be added after notebooks 2, 3, and 4 are complete.
+> Documentation will be added once the simulation scripts are built.
 
 Runs entirely in plain Python — no Spark or Hadoop required locally.
 
