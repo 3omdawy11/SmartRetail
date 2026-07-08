@@ -145,9 +145,12 @@ class PricingEngine:
         cap = base_price * self.price_cap_multiplier
         new_price = min(old_price * (1 + self.price_bump_pct), cap)
 
-        if new_price > old_price:
-            self.prices[itemid] = new_price
-            self._append_log(event_date, itemid, old_price, new_price, "surge", itemid, confidence, None)
+        # Always log a detected surge, even if the price is already at its cap
+        # (e.g. pushed there by related-item bumps from other items' surges) -
+        # otherwise a genuinely-detected surge silently vanishes: no log entry,
+        # no chart marker, no alert, just because there was no headroom left.
+        self.prices[itemid] = new_price
+        self._append_log(event_date, itemid, old_price, new_price, "surge", itemid, confidence, None)
 
         related_entries = self.relationships.get(str(itemid), [])
         if not related_entries:

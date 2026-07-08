@@ -29,6 +29,7 @@ smart_retail/
 │   ├── consumer_engine.py
 │   ├── notifier.py
 │   ├── visualize_results.py
+│   ├── webapp.py
 │   └── output/                      ← price_history.csv, charts/ (gitignored)
 ├── docker-compose.yml                ← local Redpanda (Kafka-API) broker
 ├── requirements.txt
@@ -293,8 +294,9 @@ Produces ~415 items / ~5,500 rows spanning the full test date range, versus the 
 
 - **On a surge** (`sigmoid(logits) >= decision_threshold` from `lstm_config.json`): the item's price bumps by `price_bump_pct` (10%).
 - **Related items** (from `relationships.json`) get a smaller bump, scaled by `related_bump_scale` (0.5) and by their co-occurrence weight relative to the strongest related item.
-- **Guardrails against runaway compounding** — an item that keeps re-triggering would otherwise bump every single day it stays "hot," and related bumps stack on top of each other. A `cooldown_days` (3) suppresses re-bumping the same item too soon, and a hard price cap (`price_cap_multiplier` = 1.5× base for direct surges, 1.25× for related items) bounds the outcome regardless. Verified empirically: on the regenerated sample, 484 surge events / 1,159 related bumps produced clean step trajectories that cap out at exactly +50%/+25%, not unbounded hockey sticks.
+- **Guardrails against runaway compounding** — an item that keeps re-triggering would otherwise bump every single day it stays "hot," and related bumps stack on top of each other. A `cooldown_days` (3) suppresses re-bumping the same item too soon, and a hard price cap (`price_cap_multiplier` = 1.5× base for direct surges, 1.25× for related items) bounds the outcome regardless. Verified empirically: on the regenerated sample, 505 surge events / 1,159 related bumps produced clean step trajectories that cap out at exactly +50%/+25%, not unbounded hockey sticks.
 - Feature vectors are built by iterating `lstm_config.json`'s `sequence_features` list **in order** — never hardcoded — so the tensor's feature axis can't silently drift from what the model was trained on.
+- **A detected surge is always logged, even at the price cap.** An earlier version only logged a `"surge"` entry when the price actually moved — but an item already sitting at its cap (pushed there by *related* bumps from other items' surges) would then have a real, model-detected surge silently vanish: no log entry, no chart marker, no alert. Fixed so surge *detection* is always recorded regardless of whether there's headroom left to move the price.
 
 ### Running it
 
@@ -333,6 +335,7 @@ Both paths write `simulation/output/price_history.csv` (every price change: time
 | `simulation/consumer_engine.py` | Consumes the Kafka stream, runs the pricing engine, fires alerts, writes the price log |
 | `simulation/notifier.py` | Prints a console alert on every surge; sends real SMTP email too if `.env` has `SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`ALERT_RECIPIENT` set — falls back to console-only if not configured or if sending fails |
 | `simulation/visualize_results.py` | Charts each top surging item's price trajectory (as % change from base, so items with different price scales are comparable) alongside its related items, plus a surge-count timeline |
+| `simulation/webapp.py` | Streamlit dashboard: interactive Plotly chart + sortable price table over the same pricing logic |
 
 ### Charts
 
@@ -341,6 +344,16 @@ python simulation/visualize_results.py
 ```
 
 Writes to `simulation/output/charts/`: one PNG per top surging item (its own price line plus its related items', surge points annotated with model confidence) and one `surge_timeline.png` showing surge activity across the simulated 28-day window.
+
+### Web dashboard
+
+```bash
+streamlit run simulation/webapp.py
+```
+
+A "Run Simulation" button, sliders for the pricing policy (surge bump %, related bump scale, cooldown, price cap), an interactive Plotly chart of price change over time for selected items (star markers = surge points, hover for model confidence), KPI counters, and a sortable table of every item's current price.
+
+Deliberately **not** a live Kafka consumer — it drives `PricingEngine` directly over `raw_sample.csv` (the same path as `run_dry_run.py`), rather than duplicating the Kafka consumer inside a Streamlit script that reruns on every widget interaction, which would reintroduce the consumer-group offset-commit bug that `consumer_engine.py`'s guard exists to catch. The CLI producer/consumer pair is the place to see the literal Kafka mechanics; this dashboard is a view over the same output.
 
 Install local dependencies with:
 
